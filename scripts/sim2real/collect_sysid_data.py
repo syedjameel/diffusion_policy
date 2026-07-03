@@ -23,15 +23,20 @@ from rtde_receive import RTDEReceiveInterface
 from diffusion_policy.real_world.keystroke_counter import (
     KeystrokeCounter, KeyCode,
 )
-from diffusion_policy.real_world.ur5e_kinematics import (
-    PAYLOAD_MASS, PAYLOAD_COG,
-    axis_angle_to_quat,
-    compute_jacobian_calibrated,
-    get_ee_pose,
-    OperationalSpaceController,
-)
 
 CONTROL_FREQUENCY = 500
+
+# Per-robot kinematics module + arm torque limits (selected via --robot).
+ROBOT_SPECS = {
+    "ur5e": {
+        "module": "diffusion_policy.real_world.ur5e_kinematics",
+        "torque_max": [150.0, 150.0, 150.0, 28.0, 28.0, 28.0],
+    },
+    "ur10e": {
+        "module": "diffusion_policy.real_world.ur10e_kinematics",
+        "torque_max": [330.0, 330.0, 150.0, 56.0, 56.0, 56.0],
+    },
+}
 
 
 def generate_chirp_trajectory(duration, dt, f0, f1, pos_amp, rot_amp):
@@ -92,22 +97,34 @@ def quat_multiply(q1, q2):
 @click.option('--damping_ratio', default=1.0, type=float, help="Damping ratio")
 @click.option('--payload_mass', default=None, type=float, help="Override payload mass (kg)")
 @click.option('--payload_cog', default=None, type=str, help="Override payload CoG 'x,y,z' (m)")
+@click.option('--robot', default='ur5e', type=click.Choice(sorted(ROBOT_SPECS)),
+              help="Arm to excite: selects the kinematics module and torque limits.")
 def main(robot_ip, output, joints_init_deg, duration, f0, f1, pos_amp, rot_amp,
-         kp_pos, kp_rot, damping_ratio, payload_mass, payload_cog):
+         kp_pos, kp_rot, damping_ratio, payload_mass, payload_cog, robot):
     """Collect chirp excitation data for PACE system identification."""
+    import importlib
+    kin = importlib.import_module(ROBOT_SPECS[robot]["module"])
+    global axis_angle_to_quat, compute_jacobian_calibrated, get_ee_pose, OperationalSpaceController
+    axis_angle_to_quat = kin.axis_angle_to_quat
+    compute_jacobian_calibrated = kin.compute_jacobian_calibrated
+    get_ee_pose = kin.get_ee_pose
+    OperationalSpaceController = kin.OperationalSpaceController
+
     j_init = np.deg2rad([float(x) for x in joints_init_deg.split(',')])
     assert len(j_init) == 6
 
-    pl_mass = payload_mass if payload_mass is not None else PAYLOAD_MASS
+    pl_mass = payload_mass if payload_mass is not None else kin.PAYLOAD_MASS
     if payload_cog is not None:
         pl_cog = [float(x) for x in payload_cog.split(',')]
     else:
-        pl_cog = list(PAYLOAD_COG)
+        pl_cog = list(kin.PAYLOAD_COG)
 
     dt = 1.0 / CONTROL_FREQUENCY
     motion_stiffness = (kp_pos, kp_pos, kp_pos, kp_rot, kp_rot, kp_rot)
     motion_damping_ratio = (damping_ratio,) * 6
-    torque_max = np.array([150.0, 150.0, 150.0, 28.0, 28.0, 28.0])
+    torque_max = np.array(ROBOT_SPECS[robot]["torque_max"])
+    print(f"Robot: {robot}  (kinematics: {ROBOT_SPECS[robot]['module']})")
+    print(f"Payload: {pl_mass:.2f} kg  CoG {pl_cog}")
 
     osc = OperationalSpaceController(
         motion_stiffness=motion_stiffness,
