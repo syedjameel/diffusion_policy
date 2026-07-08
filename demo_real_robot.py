@@ -36,14 +36,9 @@ from diffusion_policy.real_world.mello_teleop import MelloTeleopInterface, Dummy
 @click.option('--osc_kp_rot', default=50.0, type=float, help="OSC rotation stiffness (default 50)")
 def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, command_latency, debug, osc_kp_pos, osc_kp_rot):
 
-    configs = [
-        json.load(open("diffusion_policy/real_world/realsense_config/"
-                      "455_front.json")),
-        json.load(open("diffusion_policy/real_world/realsense_config/"
-                      "435_side.json")),
-        json.load(open("diffusion_policy/real_world/realsense_config/"
-                      "415_wrist.json"))
-    ]
+    # 3x RealSense D405 -- no advanced-mode preset (415/435/455 JSONs are model-specific and
+    # a D405 rejects them). D405s open with defaults; None skips the preset load.
+    configs = None
 
     dt = 1/frequency
     with SharedMemoryManager() as shm_manager:
@@ -55,8 +50,8 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                 output_dir=output, 
                 robot_ip=robot_ip,
                 obs_image_resolution=(640,480),
-                camera_serial_numbers=['215122255213', '832112070487',
-                        '746112060198'],
+                # 3x D405 in front/side/wrist order (positional role mapping in real_env).
+                camera_serial_numbers=['409122272284', '409122273078', '323622272232'],
                 camera_configs=configs,
                 frequency=frequency,
                 init_joints=init_joints,

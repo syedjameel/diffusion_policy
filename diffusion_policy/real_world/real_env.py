@@ -18,7 +18,7 @@ from diffusion_policy.real_world.multi_camera_visualizer import MultiCameraVisua
 from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.cv2_util import (
     get_image_transform, optimal_row_cols)
-from diffusion_policy.real_world.ur5e_kinematics import axis_angle_to_quat
+from diffusion_policy.real_world.ur10e_kinematics import axis_angle_to_quat
 
 DEFAULT_OBS_KEY_MAP = {
     # robot
@@ -51,6 +51,9 @@ class RealEnv:
             # robot
             init_joints=True,
             custom_init_joints=None,  # Custom initial joint positions
+            # linear gripper (serial)
+            gripper_device="/dev/ttyACM0",
+            gripper_baudrate=115200,
             # OSC parameters
             osc_kp_pos=1000.0,
             osc_kp_rot=50.0,
@@ -173,12 +176,17 @@ class RealEnv:
                 print(f"Using custom initial joint positions: {j_init}")
             else:
                 # Use default initial joint positions
-                j_init = np.array([16.85, -79.74, 99.80, -114.68, -91.09, 20.43]) / 180 * np.pi
-                print(f"Using default initial joint positions: {j_init}")
+                # UR10e neutral home (sim UR10E_DEFAULT_JOINT_POS: pan/lift/elbow/w1/w2/w3).
+                # TODO: retune to a pose that frames the real pcb/openbox workspace
+                # (lerobot EE workspace ~ x[-0.24,-0.18] y[-0.59,-0.52] z[0.33,0.37]).
+                j_init = np.array([0.0, -90.0, 90.0, -90.0, -90.0, -90.0]) / 180 * np.pi
+                print(f"Using default UR10e initial joint positions: {j_init}")
 
         robot = RTDEInterpolationController(
             shm_manager=shm_manager,
             robot_ip=robot_ip,
+            gripper_device=gripper_device,
+            gripper_baudrate=gripper_baudrate,
             frequency=500,
             launch_timeout=3,
             joints_init=j_init,

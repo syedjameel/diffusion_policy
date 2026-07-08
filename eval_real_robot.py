@@ -50,7 +50,7 @@ import imageio
 from scipy.spatial.transform import Rotation as R
 
 # Calibrated FK matching simulation (wrist_3_link in REP-103 base_link frame)
-from diffusion_policy.real_world.ur5e_kinematics import get_ee_pose, quat_to_axis_angle, apply_delta_pose
+from diffusion_policy.real_world.ur10e_kinematics import get_ee_pose, quat_to_axis_angle, apply_delta_pose
 
 # Robomimic imports
 import robomimic.utils.torch_utils as TorchUtils
@@ -174,14 +174,10 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     
     # load checkpoint
     device = TorchUtils.get_torch_device(try_to_use_cuda=True)
-    configs = [
-        json.load(open("diffusion_policy/real_world/realsense_config/"
-                      "455_front.json")),
-        json.load(open("diffusion_policy/real_world/realsense_config/"
-                      "435_side.json")),
-        json.load(open("diffusion_policy/real_world/realsense_config/"
-                      "415_wrist.json"))
-    ]
+    # 3x RealSense D405 -- no advanced-mode preset (the 415/435/455 JSONs are model-specific
+    # depth-stereo presets that a D405 rejects). D405s open cleanly with defaults, matching
+    # our working lerobot rig. `camera_configs=None` skips the preset load in single_realsense.
+    configs = None
 
     ckpt_path = input
     payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
@@ -227,8 +223,9 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             record_raw_video=True,
             rolling_action_buffer=True,
             action_mode='cartesian',
-            camera_serial_numbers=['215122255213', '832112070487',
-                                  '746112060198'],
+            # 3x D405, in front/side/wrist order (role is positional: real_env maps
+            # camera idx 0->front_rgb, 1->side_rgb, 2->wrist_rgb).
+            camera_serial_numbers=['409122272284', '409122273078', '323622272232'],
             camera_configs=configs,
             # number of threads per camera view for video recording (H.264)
             thread_per_video=3,

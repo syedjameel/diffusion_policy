@@ -11,8 +11,10 @@ from diffusion_policy.shared_memory.shared_memory_queue import (
     SharedMemoryQueue, Empty)
 from diffusion_policy.shared_memory.shared_memory_ring_buffer import (
     SharedMemoryRingBuffer)
-from diffusion_policy.real_world.robotiq_gripper import RobotiqGripper
-from diffusion_policy.real_world.ur5e_kinematics import (
+from diffusion_policy.real_world.linear_gripper import LinearGripper
+# UR10e + custom linear gripper. ur10e_kinematics is a data-swapped sibling of
+# ur5e_kinematics with an identical public API (same FK/Jacobian/OSC + PAYLOAD_*).
+from diffusion_policy.real_world.ur10e_kinematics import (
     forward_kinematics_calibrated, compute_jacobian_calibrated,
     get_ee_pose, axis_angle_to_quat, quat_to_axis_angle,
     apply_delta_pose, compute_pose_error,
@@ -35,7 +37,8 @@ class RTDEInterpolationController(mp.Process):
     def __init__(self,
                  shm_manager: SharedMemoryManager,
                  robot_ip,
-                 gripper_port=63352,
+                 gripper_device="/dev/ttyACM0",
+                 gripper_baudrate=115200,
                  frequency=500,
                  launch_timeout=3,
                  joints_init=None,
@@ -74,7 +77,8 @@ class RTDEInterpolationController(mp.Process):
 
         super().__init__(name="RTDEOSCController")
         self.robot_ip = robot_ip
-        self.gripper_port = gripper_port
+        self.gripper_device = gripper_device
+        self.gripper_baudrate = gripper_baudrate
         self.frequency = frequency
         self.launch_timeout = launch_timeout
         self.joints_init = joints_init
@@ -83,8 +87,8 @@ class RTDEInterpolationController(mp.Process):
         self.verbose = verbose
         self.tcp_offset = np.array(tcp_offset) if tcp_offset is not None else None
         
-        # Torque limits
-        self.torque_max = np.array([150.0, 150.0, 150.0, 28.0, 28.0, 28.0], dtype=np.float64)
+        # Torque limits (UR10e joint effort limits from the URDF; the UR5e uses 150/28).
+        self.torque_max = np.array([330.0, 330.0, 150.0, 56.0, 56.0, 56.0], dtype=np.float64)
         
         # OSC parameters
         self.osc_error_delta_pos = osc_error_delta_pos if osc_error_delta_pos > 0 else None
@@ -300,9 +304,8 @@ class RTDEInterpolationController(mp.Process):
             os.sched_setscheduler(
                 0, os.SCHED_RR, os.sched_param(20))
 
-        # start gripper
-        gripper = RobotiqGripper()
-        gripper.connect(self.robot_ip, self.gripper_port)
+        # start gripper (serial linear gripper -- open the port inside this child process)
+        gripper = LinearGripper(device=self.gripper_device, baudrate=self.gripper_baudrate)
         # start rtde
         robot_ip = self.robot_ip
         rtde_c = RTDEControlInterface(hostname=robot_ip, frequency=self.frequency,
@@ -320,7 +323,7 @@ class RTDEInterpolationController(mp.Process):
                 assert rtde_c.moveJ(self.joints_init.tolist(),
                                     self.joints_init_speed, 1.4)
 
-            gripper.activate()
+            gripper.set_closed(False)  # no activation step; command a known open state
 
             # main loop
             curr_joints = rtde_r.getActualQ()
@@ -357,14 +360,14 @@ class RTDEInterpolationController(mp.Process):
                     if self.verbose:
                         print("[RTDETorqueController] directTorque failed")
 
-                # update gripper state
+                # update gripper state (LinearGripper.set_closed writes only on a change)
                 if (current_gripper_close and
                         current_gripper_state == 'open'):
-                    gripper.move(gripper.get_closed_position(), 128, 128)
+                    gripper.set_closed(True)
                     current_gripper_state = 'closed'
                 elif (not current_gripper_close and
                       current_gripper_state == 'closed'):
-                    gripper.move(gripper.get_open_position(), 128, 128)
+                    gripper.set_closed(False)
                     current_gripper_state = 'open'
 
                 # update robot state
@@ -451,6 +454,7 @@ class RTDEInterpolationController(mp.Process):
                     print(f"[RTDETorqueController] Cleanup error: {e}")
 
             # terminate
+            gripper.disconnect()  # close the serial port (Robotiq closed with the robot socket)
             rtde_c.stopScript()
             rtde_c.disconnect()
             rtde_r.disconnect()
