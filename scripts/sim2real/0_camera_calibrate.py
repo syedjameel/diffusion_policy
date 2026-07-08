@@ -43,11 +43,12 @@ if __name__ == "__main__":
             rgb = frames["rgb"]
             depth = frames["depth"]
 
-            # TODO: insert aruco offset to base
+            # ArUco marker-center position in the UR10e base frame (measured from the
+            # pendant, Base feature). Marker is rotated so its +X is parallel to base +X.
             aruco_offset = np.array(
                 [
-                    0.24,
                     0.0,
+                    -0.463,
                     0.0,
                 ]
             )
