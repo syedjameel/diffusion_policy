@@ -50,8 +50,9 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                 output_dir=output, 
                 robot_ip=robot_ip,
                 obs_image_resolution=(640,480),
-                # 3x D405 in front/side/wrist order (positional role mapping in real_env).
-                camera_serial_numbers=['409122272284', '409122273078', '323622272232'],
+                # 3x D405 in front/side/wrist order (positional role mapping in real_env):
+                # front=409122273078, side=323622272232, wrist=409122272284.
+                camera_serial_numbers=['409122273078', '323622272232', '409122272284'],
                 camera_configs=configs,
                 frequency=frequency,
                 init_joints=init_joints,

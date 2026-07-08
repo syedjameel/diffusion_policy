@@ -223,9 +223,10 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             record_raw_video=True,
             rolling_action_buffer=True,
             action_mode='cartesian',
-            # 3x D405, in front/side/wrist order (role is positional: real_env maps
-            # camera idx 0->front_rgb, 1->side_rgb, 2->wrist_rgb).
-            camera_serial_numbers=['409122272284', '409122273078', '323622272232'],
+            # 3x D405 in front/side/wrist order (positional: real_env maps camera idx
+            # 0->front_rgb, 1->side_rgb, 2->wrist_rgb). Serials verified on the rig:
+            # front=409122273078, side=323622272232, wrist=409122272284.
+            camera_serial_numbers=['409122273078', '323622272232', '409122272284'],
             camera_configs=configs,
             # number of threads per camera view for video recording (H.264)
             thread_per_video=3,

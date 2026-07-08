@@ -176,10 +176,8 @@ class RealEnv:
                 print(f"Using custom initial joint positions: {j_init}")
             else:
                 # Use default initial joint positions
-                # UR10e neutral home (sim UR10E_DEFAULT_JOINT_POS: pan/lift/elbow/w1/w2/w3).
-                # TODO: retune to a pose that frames the real pcb/openbox workspace
-                # (lerobot EE workspace ~ x[-0.24,-0.18] y[-0.59,-0.52] z[0.33,0.37]).
-                j_init = np.array([0.0, -90.0, 90.0, -90.0, -90.0, -90.0]) / 180 * np.pi
+                # UR10e real home pose (measured from the pendant, degrees).
+                j_init = np.array([67.94, -93.33, 146.23, -142.91, -90.04, -22.95]) / 180 * np.pi
                 print(f"Using default UR10e initial joint positions: {j_init}")
 
         robot = RTDEInterpolationController(
