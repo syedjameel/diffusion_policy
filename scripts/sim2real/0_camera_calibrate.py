@@ -43,12 +43,23 @@ if __name__ == "__main__":
             rgb = frames["rgb"]
             depth = frames["depth"]
 
-            # ArUco marker-center position in the UR10e base frame (measured from the
-            # pendant, Base feature). Marker is rotated so its +X is parallel to base +X.
+            # ArUco marker-center position in the SIM (REP-103) base frame -- the authors'
+            # convention (their default [0.24, 0, 0] is sim-frame too), so the calibration
+            # output is directly the camera pose in the sim frame (what align_cameras and
+            # the sim cfgs use; no rotation conversion anywhere).
+            #
+            # CONTRACT (both parts required):
+            #  * marker ORIENTATION: marker +X must point FROM the robot base TOWARD the
+            #    marker/workspace (physically: pendant -Y on our rig = sim +X), marker +Y
+            #    90deg CCW from that (viewed from above). NOT pendant-aligned.
+            #  * offset = marker center in sim frame: 0.463 m from base toward the
+            #    workspace => [0.463, 0, 0]. (Pendant reads the same point as [0,-0.463,0];
+            #    our rig's workspace sits 90deg from the authors' -- see the rig-orientation
+            #    note in diffusion_policy/real_world/ur10e_kinematics.py.)
             aruco_offset = np.array(
                 [
+                    0.463,
                     0.0,
-                    -0.463,
                     0.0,
                 ]
             )

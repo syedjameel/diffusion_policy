@@ -71,6 +71,40 @@ R_180Z = np.array([
 T_180Z = np.eye(4)
 T_180Z[:3, :3] = R_180Z
 
+# ---------------------------------------------------------------------------------------
+# Rig orientation: real workspace direction vs the trained sim scene.
+#
+# VERIFIED against the sim reset datasets (Datasets_ur10e/OmniReset): the sim robot spawns
+# at the origin with identity rotation and the sim workspace/table is toward sim +X
+# (objects ~[0.42, 0.1], table x=0.4); FK of reset joints matches the sim only WITH R_180Z,
+# so sim frame = REP-103. Our REAL rig has the workspace/marker toward pendant -Y
+# ([0, -0.463] on the pendant), whereas the authors' rig (default aruco_offset [0.24,0,0])
+# had it toward sim +X. Same joints => real EE maps to sim [0, +0.463]: 90 deg away from
+# the sim table. The rigs differ by a 90 deg base-mount rotation.
+#
+# Fix ("rotate the mount in software"): shift the pan joint at the real<->sim boundary,
+#     q1_sim = q1_real - 90deg
+# VERIFIED: FK+R_180Z of the q1-shifted real home [67.94,...] lands at [0.463, 0, 0.22] --
+# directly over the sim table. Apply real_to_sim_joints() to every joint vector read from
+# RTDE before it feeds FK / OSC / policy obs; keep raw real joints for moveJ/servoJ.
+# Torques are per-joint and invariant. ActualQd is offset-free (constant shift).
+# ---------------------------------------------------------------------------------------
+J1_REAL_TO_SIM = -np.pi / 2.0
+
+
+def real_to_sim_joints(joints):
+    """RTDE joint vector -> sim-convention joints (q1 shifted by -90 deg)."""
+    q = np.array(joints, dtype=np.float64).copy()
+    q[..., 0] += J1_REAL_TO_SIM
+    return q
+
+
+def sim_to_real_joints(joints):
+    """Sim-convention joints -> RTDE joint vector (q1 shifted by +90 deg)."""
+    q = np.array(joints, dtype=np.float64).copy()
+    q[..., 0] -= J1_REAL_TO_SIM
+    return q
+
 # Link inertial parameters from the UR10e URDF (for mass matrix computation)
 # Format: mass, center of mass (in link frame), inertia tensor (Ixx, Iyy, Izz, Ixy, Ixz, Iyz)
 # NOTE: Using bare arm inertias (no gripper payload) for simpler, more compliant behavior

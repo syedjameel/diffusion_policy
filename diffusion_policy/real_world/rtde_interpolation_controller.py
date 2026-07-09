@@ -19,6 +19,7 @@ from diffusion_policy.real_world.ur10e_kinematics import (
     get_ee_pose, axis_angle_to_quat, quat_to_axis_angle,
     apply_delta_pose, compute_pose_error,
     PAYLOAD_MASS, PAYLOAD_COG,
+    real_to_sim_joints,
 )
 
 
@@ -318,7 +319,8 @@ class RTDEInterpolationController(mp.Process):
                 print(f"[RTDETorqueController] Connect to robot: "
                       f"{robot_ip}")
 
-            # init joints
+            # init joints -- joints_init are REAL pendant-frame values; moveJ talks straight
+            # to the UR controller, so NO real_to_sim shift here.
             if self.joints_init is not None:
                 assert rtde_c.moveJ(self.joints_init.tolist(),
                                     self.joints_init_speed, 1.4)
@@ -326,7 +328,10 @@ class RTDEInterpolationController(mp.Process):
             gripper.set_closed(False)  # no activation step; command a known open state
 
             # main loop
-            curr_joints = rtde_r.getActualQ()
+            # Everything past the RTDE read runs in the SIM joint convention (q1 - 90deg,
+            # see ur10e_kinematics rig-orientation note): FK/Jacobian/OSC targets and the
+            # policy's joint targets are all sim-frame; only moveJ/servoJ stay real-frame.
+            curr_joints = real_to_sim_joints(rtde_r.getActualQ())
             current_target_joints = np.array(curr_joints, dtype=np.float64)
             # Cartesian target: initialize from current FK
             init_pos, init_quat = get_ee_pose(np.array(curr_joints))
@@ -342,8 +347,8 @@ class RTDEInterpolationController(mp.Process):
                 # start control iteration
                 t_start = rtde_c.initPeriod()
 
-                curr_joints = np.array(rtde_r.getActualQ(), dtype=np.float64)
-                curr_vel = np.array(rtde_r.getActualQd(), dtype=np.float64)
+                curr_joints = real_to_sim_joints(rtde_r.getActualQ())
+                curr_vel = np.array(rtde_r.getActualQd(), dtype=np.float64)  # offset-free
                 
                 # Compute OSC torque command
                 if use_cartesian_target and current_target_ee_pos is not None:
@@ -374,6 +379,10 @@ class RTDEInterpolationController(mp.Process):
                 state = dict()
                 for key in self.receive_keys:
                     state[key] = np.array(getattr(rtde_r, 'get'+key)())
+                # Policy obs consume ActualQ (arm_joint_pos; eval_real_robot recomputes
+                # end_effector_pose from it via FK) -> publish it in the sim convention.
+                # ActualTCPPose stays raw pendant-frame (logging only, not policy obs).
+                state['ActualQ'] = real_to_sim_joints(state['ActualQ'])
                 state['robot_receive_timestamp'] = time.time()
                 state['osc_target_pos'] = current_target_ee_pos.copy()
                 state['osc_target_quat'] = current_target_ee_quat.copy()

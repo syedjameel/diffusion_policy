@@ -1,3 +1,13 @@
+"""Convert the ArUco calibration (most_recent_calib.json) to an Isaac-Sim camera pose.
+
+Frame contract: NO base-rotation conversion happens here (or anywhere in the calibration
+path) BY DESIGN. 0_camera_calibrate.py outputs the camera pose directly in the SIM
+(REP-103) base frame, PROVIDED the marker is oriented per the contract documented there
+(marker +X pointing from the robot base toward the marker/workspace) and aruco_offset is
+expressed in sim coordinates. This script only applies the OpenCV -> OpenGL/Isaac camera
+axis correction. The printed pos/quat is a sim-frame warm start; align_cameras refines it.
+"""
+
 import json
 import numpy as np
 import os
