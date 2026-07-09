@@ -121,15 +121,26 @@ if __name__ == "__main__":
     )
     print(f"Saved calibration at {os.path.join(calib_path,f'perception/logs/aruco/most_recent_calib.json')}")
 
-    x = np.zeros((1, 3))
-    for d in np.arange(0, 1, 0.1):
-        x[:, 0] = d
-        pcds.append(points_to_pcd(x, colors=[[255.0, 0.0, 0.0]]))
-        y = np.zeros((1, 3))
-        y[:, 1] = d
-        pcds.append(points_to_pcd(y, colors=[[0.0, 255.0, 0.0]]))
-        z = np.zeros((1, 3))
-        z[:, 2] = d
-        pcds.append(points_to_pcd(z, colors=[[0.0, 0.0, 255.0]]))
+    # --- labeled reference triads (disambiguate WHERE each frame origin is) ---
+    # A compact solid triad marks each ORIGIN; the arms are just direction hints. This
+    # replaces the old 1 m dotted axes, whose long +Z line read as "the frame floating up
+    # near the camera" when the origin is actually the point where R/G/B converge.
+    import open3d as o3d
 
-    visualize_pcds(pcds)
+    geoms = list(pcds)
+    # ROBOT BASE frame (biggest triad) at the origin of the whole point cloud.
+    geoms.append(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.20, origin=[0.0, 0.0, 0.0]))
+    # ArUco MARKER center (mid triad) -- should sit ~|aruco_offset| from the base triad.
+    geoms.append(
+        o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10, origin=list(map(float, aruco_offset)))
+    )
+    # CAMERA position(s) (small triad) -- where each D405 sees the scene from.
+    for c in final_calib_dict:
+        cam_pos = list(map(float, np.array(c["camera_base_pos"]).ravel()))
+        geoms.append(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.08, origin=cam_pos))
+        print(f"[frames] camera {c['camera_serial_number']}  base pos = {np.round(cam_pos, 3)}")
+    print(
+        f"[frames] BIG triad = ROBOT BASE @ [0,0,0] | MID triad = MARKER @ {list(map(float, aruco_offset))}"
+        f" | SMALL triad(s) = CAMERA. Base->marker should measure ~{np.linalg.norm(aruco_offset):.3f} m."
+    )
+    o3d.visualization.draw_geometries(geoms)
