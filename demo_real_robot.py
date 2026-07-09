@@ -84,8 +84,14 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
             # RTDE boundary), then nudged per keypress. 1 cm / 5 deg per press.
             kb_pos = kb_quat = None
             kb_gripper = 1.0  # >0 = open
-            KB_STEP_POS = 0.01
-            KB_STEP_ROT = np.deg2rad(5.0)
+            # Small steps: key auto-repeat (~25 Hz held) then advances the target
+            # ~7 cm/s CONTINUOUSLY -- sustained force through the stiction dead zone,
+            # like the policy's 10 Hz stream. 1 cm discrete steps stick-slipped: a 1 cm
+            # error is only ~10 N task force, below the sysid'd 20-30 N*m joint stiction,
+            # so presses stacked then lurched.
+            KB_STEP_POS = 0.003
+            KB_STEP_ROT = np.deg2rad(2.0)
+            KB_LEASH = 0.05  # clamp target within 5 cm of the actual EE (no error stacking)
             if keyboard:
                 obs0 = env.get_obs()
                 kb_pos, kb_quat = get_ee_pose(obs0['arm_joint_pos'][-1])
@@ -171,6 +177,14 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                 precise_wait(t_sample)
 
                 if keyboard:
+                    # leash: never let the commanded target run more than KB_LEASH ahead
+                    # of the ACTUAL EE (bounds the OSC force; queued presses can't stack
+                    # into a big lurch)
+                    cur_pos, _ = get_ee_pose(obs['arm_joint_pos'][-1])
+                    err = kb_pos - cur_pos
+                    n = float(np.linalg.norm(err))
+                    if n > KB_LEASH:
+                        kb_pos = cur_pos + err / n * KB_LEASH
                     # absolute EE target [pos, axis-angle] + gripper (cartesian mode)
                     unified_action = np.concatenate(
                         [kb_pos, quat_to_axis_angle(kb_quat), [kb_gripper]])
