@@ -104,8 +104,10 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                             is_recording = False
                 stage = key_counter[Key.space]
 
-                # visualize
-                vis_img = obs[f'camera_{vis_camera_idx}'][-1,:,:,::-1].copy()
+                # visualize -- our real_env names camera obs by ROLE (front/side/wrist_rgb,
+                # positional order = the serial list), not camera_{i}
+                vis_key = ('front_rgb', 'side_rgb', 'wrist_rgb')[vis_camera_idx]
+                vis_img = obs[vis_key][-1,:,:,::-1].copy()
                 episode_id = env.replay_buffer.n_episodes
                 text = f'Episode: {episode_id}, Stage: {stage}'
                 if is_recording:
