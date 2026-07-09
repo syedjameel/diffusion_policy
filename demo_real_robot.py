@@ -117,7 +117,12 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                         is_recording = False
                         print('Stopped.')
                     elif key_stroke == Key.backspace:
-                        if click.confirm('Are you sure to drop an episode?'):
+                        # Guard: only when there is an episode to drop. The click.confirm
+                        # BLOCKS the teleop loop (the arm holds the last OSC target), and a
+                        # stray backspace used to freeze/crash the session on an empty buffer.
+                        if env.replay_buffer.n_episodes < 1:
+                            print('[backspace ignored: no recorded episodes]')
+                        elif click.confirm('Are you sure to drop an episode?'):
                             env.drop_episode()
                             key_counter.clear()
                             is_recording = False
