@@ -305,8 +305,16 @@ class SingleRealsense(mp.Process):
 
             # report global time
             # https://github.com/IntelRealSense/librealsense/pull/3909
-            d = pipeline_profile.get_device().first_color_sensor()
-            d.set_option(rs.option.global_time_enabled, 1)
+            # D405: there is no separate color sensor module (RGB is hosted by the
+            # stereo/depth unit), so first_color_sensor() raises "Could not find
+            # requested sensor type!" -- fall back to the depth sensor.
+            device = pipeline_profile.get_device()
+            try:
+                d = device.first_color_sensor()
+            except RuntimeError:
+                d = device.first_depth_sensor()
+            if d.supports(rs.option.global_time_enabled):
+                d.set_option(rs.option.global_time_enabled, 1)
 
             # setup advanced mode
             if self.advanced_mode_config is not None:
@@ -442,10 +450,16 @@ class SingleRealsense(mp.Process):
                         command[key] = value[i]
                     cmd = command['cmd']
                     if cmd == Command.SET_COLOR_OPTION.value:
-                        sensor = pipeline_profile.get_device().first_color_sensor()
+                        device = pipeline_profile.get_device()
+                        try:
+                            sensor = device.first_color_sensor()
+                        except RuntimeError:
+                            # D405: color options live on the stereo/depth module
+                            sensor = device.first_depth_sensor()
                         option = rs.option(command['option_enum'])
                         value = float(command['option_value'])
-                        sensor.set_option(option, value)
+                        if sensor.supports(option):
+                            sensor.set_option(option, value)
                         # print('auto', sensor.get_option(rs.option.enable_auto_exposure))
                         # print('exposure', sensor.get_option(rs.option.exposure))
                         # print('gain', sensor.get_option(rs.option.gain))
