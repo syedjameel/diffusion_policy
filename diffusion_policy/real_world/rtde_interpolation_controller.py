@@ -238,9 +238,13 @@ class RTDEInterpolationController(mp.Process):
         if self.joints_init is not None:
             print(f"Resetting robot to initial position: {self.joints_init}")
             # Note: This requires direct access to rtde_c, so it's handled in run()
-            # For now, just set target to initial joints
+            # For now, just set target to initial joints.
+            # joints_init is REAL pendant-frame; joint_torque_control targets are
+            # SIM-frame (the run loop FKs them), so convert -- without this the OSC
+            # would drive the arm toward a pose 90 deg around the base (rig-orientation
+            # note in ur10e_kinematics).
             self.joint_torque_control(
-                target_joints=self.joints_init,
+                target_joints=real_to_sim_joints(self.joints_init),
                 close_gripper=False
             )
             time.sleep(duration + 0.5)
