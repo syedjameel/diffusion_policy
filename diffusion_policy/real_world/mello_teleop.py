@@ -14,8 +14,13 @@ class DummyMelloTeleopInterface:
     """Returns fixed joint positions for testing (no Mello device)."""
     def __init__(self, port=None, baudrate=None):
         """port and baudrate ignored; for API compatibility only."""
-        # Initialize with a reasonable "home" position in radians
-        self.fixed_joints = [0, -math.pi/2, math.pi/2, -math.pi/2, -math.pi/2, 0]
+        # The REAL UR10e home pose (pendant frame; deg 67.94 -93.33 146.23 -142.91
+        # -90.04 -22.95) -- same values as real_env's default init joints, so
+        # `demo_real_robot --debug -j` is a HOLD-STILL smoke test: moveJ homes the arm,
+        # the dummy commands the same pose, and the OSC should hold it dead quiet.
+        # (The old UR5e neutral [0,-90,90,-90,-90,0] would have swept the arm from home.)
+        self.fixed_joints = [math.radians(d) for d in
+                             (67.94, -93.33, 146.23, -142.91, -90.04, -22.95)]
         # Concatenate joints with gripper value (1 for open, -1 for closed)
         self.latest_values = self.fixed_joints + [1]  # Gripper stays open
         print("Initialized DummyMelloTeleopInterface with fixed joint positions")

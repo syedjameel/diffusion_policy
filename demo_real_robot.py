@@ -21,6 +21,7 @@ from diffusion_policy.real_world.keystroke_counter import (
     KeystrokeCounter, Key, KeyCode
 )
 from diffusion_policy.real_world.mello_teleop import MelloTeleopInterface, DummyMelloTeleopInterface
+from diffusion_policy.real_world.ur10e_kinematics import real_to_sim_joints
 
 
 @click.command()
@@ -126,7 +127,11 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                 precise_wait(t_sample)
 
                 mello_values = mello.get_latest_values()
-                mello_joints = mello_values[:6]
+                # Mello is a physical replica arm -> its joints are REAL pendant-frame.
+                # exec_actions joint targets are SIM-frame (the controller FKs them), so
+                # convert here at the device boundary (rig-orientation note in
+                # ur10e_kinematics; without this the OSC pulls the arm 90 deg off).
+                mello_joints = real_to_sim_joints(mello_values[:6])
                 gripper_command = mello_values[6]
                 unified_action = np.concatenate([mello_joints, [gripper_command]])
 

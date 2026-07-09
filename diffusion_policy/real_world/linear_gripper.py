@@ -21,13 +21,22 @@ import serial
 
 class LinearGripper:
     def __init__(self, device: str = "/dev/ttyACM0", baudrate: int = 115200, timeout: float = 1.0):
-        self._serial = serial.Serial(device, baudrate, timeout=timeout)
         self._device = device
+        # Tolerate a missing/unplugged port: this constructor runs inside the controller's
+        # run(), and raising here would kill the 500 Hz torque loop at startup. Armless
+        # teleop / OSC tests must be able to run without the gripper cable.
+        try:
+            self._serial = serial.Serial(device, baudrate, timeout=timeout)
+        except (serial.SerialException, OSError) as e:
+            print(f"[LinearGripper] could not open {device} ({e}) -- gripper DISABLED, arm control unaffected")
+            self._serial = None
         # None = unknown until the first command is sent (so the first set_closed always writes).
         self._is_open: bool | None = None
 
     def set_closed(self, closed: bool) -> None:
         """Command close (``True``) or open (``False``). Writes only on a state change."""
+        if self._serial is None:
+            return
         want_open = not bool(closed)
         if want_open is self._is_open:
             return
