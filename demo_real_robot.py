@@ -21,7 +21,9 @@ from diffusion_policy.real_world.keystroke_counter import (
     KeystrokeCounter, Key, KeyCode
 )
 from diffusion_policy.real_world.mello_teleop import MelloTeleopInterface, DummyMelloTeleopInterface
-from diffusion_policy.real_world.ur10e_kinematics import real_to_sim_joints
+from diffusion_policy.real_world.ur10e_kinematics import (
+    real_to_sim_joints, get_ee_pose, quat_to_axis_angle, apply_delta_pose,
+)
 
 
 @click.command()
@@ -35,7 +37,8 @@ from diffusion_policy.real_world.ur10e_kinematics import real_to_sim_joints
 @click.option('--debug', is_flag=True, help="Use dummy Mello interface with fixed joint positions for testing.")
 @click.option('--osc_kp_pos', default=1000.0, type=float, help="OSC position stiffness (default 1000)")
 @click.option('--osc_kp_rot', default=50.0, type=float, help="OSC rotation stiffness (default 50)")
-def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, command_latency, debug, osc_kp_pos, osc_kp_rot):
+@click.option('--keyboard', is_flag=True, help="Keyboard Cartesian jog (no Mello needed): i/k=+-x, j/l=+-y, u/m=+-z, o/p=+-yaw, g=gripper toggle.")
+def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, command_latency, debug, osc_kp_pos, osc_kp_rot, keyboard):
 
     # 3x RealSense D405 -- no advanced-mode preset (415/435/455 JSONs are model-specific and
     # a D405 rejects them). D405s open with defaults; None skips the preset load.
@@ -43,12 +46,13 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
 
     dt = 1/frequency
     with SharedMemoryManager() as shm_manager:
-        MelloInterface = DummyMelloTeleopInterface if debug else MelloTeleopInterface
-        mello_kwargs = {} if debug else {'port': mello_port}
+        # --keyboard needs no Mello device; reuse the dummy as a placeholder.
+        MelloInterface = DummyMelloTeleopInterface if (debug or keyboard) else MelloTeleopInterface
+        mello_kwargs = {} if (debug or keyboard) else {'port': mello_port}
         with KeystrokeCounter() as key_counter, \
             MelloInterface(**mello_kwargs) as mello, \
             RealEnv(
-                output_dir=output, 
+                output_dir=output,
                 robot_ip=robot_ip,
                 obs_image_resolution=(640,480),
                 # 3x D405 in front/side/wrist order (positional role mapping in real_env):
@@ -57,6 +61,9 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                 camera_configs=configs,
                 frequency=frequency,
                 init_joints=init_joints,
+                # keyboard jog drives an absolute EE target -- the same Cartesian command
+                # path eval_real_robot uses; Mello/debug keep joint mode.
+                action_mode='cartesian' if keyboard else 'joint',
                 enable_multi_cam_vis=True,
                 record_raw_video=True,
                 thread_per_video=3,
@@ -72,6 +79,18 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
             kd_rot = 2 * np.sqrt(osc_kp_rot) * 1.0
             print(f'OSC: Kp_pos={osc_kp_pos}, Kp_rot={osc_kp_rot}, Kd_pos={kd_pos:.1f}, Kd_rot={kd_rot:.1f}')
             print('Ready!')
+            # Keyboard jog state: absolute EE target seeded from the CURRENT pose
+            # (FK of the sim-frame joints -- arm_joint_pos is already converted at the
+            # RTDE boundary), then nudged per keypress. 1 cm / 5 deg per press.
+            kb_pos = kb_quat = None
+            kb_gripper = 1.0  # >0 = open
+            KB_STEP_POS = 0.01
+            KB_STEP_ROT = np.deg2rad(5.0)
+            if keyboard:
+                obs0 = env.get_obs()
+                kb_pos, kb_quat = get_ee_pose(obs0['arm_joint_pos'][-1])
+                print(f'[keyboard] jog from EE pos {np.round(kb_pos,3)} | '
+                      f'i/k=+-x  j/l=+-y  u/m=+-z  o/p=+-yaw  g=gripper  q=quit')
             t_start = time.monotonic()
             iter_idx = 0
             stop = False
@@ -102,6 +121,24 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                             env.drop_episode()
                             key_counter.clear()
                             is_recording = False
+                    elif keyboard and kb_pos is not None:
+                        # Cartesian jog: build a 6D delta and apply to the held target.
+                        jog = {
+                            KeyCode(char='i'): ( KB_STEP_POS, 0, 0, 0, 0, 0),
+                            KeyCode(char='k'): (-KB_STEP_POS, 0, 0, 0, 0, 0),
+                            KeyCode(char='j'): (0,  KB_STEP_POS, 0, 0, 0, 0),
+                            KeyCode(char='l'): (0, -KB_STEP_POS, 0, 0, 0, 0),
+                            KeyCode(char='u'): (0, 0,  KB_STEP_POS, 0, 0, 0),
+                            KeyCode(char='m'): (0, 0, -KB_STEP_POS, 0, 0, 0),
+                            KeyCode(char='o'): (0, 0, 0, 0, 0,  KB_STEP_ROT),
+                            KeyCode(char='p'): (0, 0, 0, 0, 0, -KB_STEP_ROT),
+                        }.get(key_stroke)
+                        if jog is not None:
+                            kb_pos, kb_quat = apply_delta_pose(kb_pos, kb_quat, np.array(jog))
+                            print(f'[keyboard] target EE pos {np.round(kb_pos,3)}')
+                        elif key_stroke == KeyCode(char='g'):
+                            kb_gripper = -kb_gripper
+                            print(f'[keyboard] gripper -> {"CLOSE" if kb_gripper < 0 else "OPEN"}')
                 stage = key_counter[Key.space]
 
                 # visualize -- our real_env names camera obs by ROLE (front/side/wrist_rgb,
@@ -128,14 +165,19 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
 
                 precise_wait(t_sample)
 
-                mello_values = mello.get_latest_values()
-                # Mello is a physical replica arm -> its joints are REAL pendant-frame.
-                # exec_actions joint targets are SIM-frame (the controller FKs them), so
-                # convert here at the device boundary (rig-orientation note in
-                # ur10e_kinematics; without this the OSC pulls the arm 90 deg off).
-                mello_joints = real_to_sim_joints(mello_values[:6])
-                gripper_command = mello_values[6]
-                unified_action = np.concatenate([mello_joints, [gripper_command]])
+                if keyboard:
+                    # absolute EE target [pos, axis-angle] + gripper (cartesian mode)
+                    unified_action = np.concatenate(
+                        [kb_pos, quat_to_axis_angle(kb_quat), [kb_gripper]])
+                else:
+                    mello_values = mello.get_latest_values()
+                    # Mello is a physical replica arm -> its joints are REAL pendant-frame.
+                    # exec_actions joint targets are SIM-frame (the controller FKs them), so
+                    # convert here at the device boundary (rig-orientation note in
+                    # ur10e_kinematics; without this the OSC pulls the arm 90 deg off).
+                    mello_joints = real_to_sim_joints(mello_values[:6])
+                    gripper_command = mello_values[6]
+                    unified_action = np.concatenate([mello_joints, [gripper_command]])
 
                 env.exec_actions(
                     actions=[unified_action], 
