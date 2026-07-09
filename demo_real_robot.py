@@ -146,7 +146,8 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                         }.get(key_stroke)
                         if jog is not None:
                             kb_pos, kb_quat = apply_delta_pose(kb_pos, kb_quat, np.array(jog))
-                            print(f'[keyboard] target EE pos {np.round(kb_pos,3)}')
+                            _cur = get_ee_pose(obs['arm_joint_pos'][-1])[0]
+                            print(f'[keyboard] target {np.round(kb_pos,3)} | actual {np.round(_cur,3)}')
                         elif key_stroke == KeyCode(char='g'):
                             kb_gripper = -kb_gripper
                             print(f'[keyboard] gripper -> {"CLOSE" if kb_gripper < 0 else "OPEN"}')
@@ -177,14 +178,15 @@ def main(output, robot_ip, mello_port, vis_camera_idx, init_joints, frequency, c
                 precise_wait(t_sample)
 
                 if keyboard:
-                    # leash: never let the commanded target run more than KB_LEASH ahead
-                    # of the ACTUAL EE (bounds the OSC force; queued presses can't stack
-                    # into a big lurch)
+                    # leash: PER-AXIS clamp of the target to within KB_LEASH of the actual
+                    # EE. Per-axis is essential: the earlier radial clamp scaled the y/z
+                    # error down along with x, so the target ADOPTED whatever lateral drift
+                    # the arm picked up (stiction coupling) -- a drift integrator that
+                    # walked y/z away (-9 cm y observed). Per-axis leaves untouched any
+                    # axis whose error is < KB_LEASH (full Kp correction authority), and
+                    # only caps the axis you are deliberately leading (no press stacking).
                     cur_pos, _ = get_ee_pose(obs['arm_joint_pos'][-1])
-                    err = kb_pos - cur_pos
-                    n = float(np.linalg.norm(err))
-                    if n > KB_LEASH:
-                        kb_pos = cur_pos + err / n * KB_LEASH
+                    kb_pos = cur_pos + np.clip(kb_pos - cur_pos, -KB_LEASH, KB_LEASH)
                     # absolute EE target [pos, axis-angle] + gripper (cartesian mode)
                     unified_action = np.concatenate(
                         [kb_pos, quat_to_axis_angle(kb_quat), [kb_gripper]])
