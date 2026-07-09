@@ -45,11 +45,13 @@ if __name__ == "__main__":
 
             # ArUco marker-center position in the UR10e base frame (measured from the
             # pendant, Base feature). Marker is rotated so its +X is parallel to base +X.
+            # z = +3.8mm: the base origin sits 3.8mm below the marker, so in the base frame
+            # the marker is 3.8mm up (base -z => marker +z).
             aruco_offset = np.array(
                 [
                     0.0,
                     -0.463,
-                    0.0,
+                    0.0038,
                 ]
             )
 
