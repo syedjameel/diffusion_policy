@@ -78,7 +78,11 @@ if __name__ == "__main__":
             )
 
             if round_idx == 0:  # Only collect point cloud data in first round
-                points = depth_to_points(depth, intrinsics, extrinsics_inv, depth_scale=1000.0)
+                # 1/depth_scale = units-per-meter for THIS device (D405 ~0.1mm, not the
+                # 1mm the old hardcoded 1000.0 assumed -> that made the cloud ~10x too big).
+                points = depth_to_points(
+                    depth, intrinsics, extrinsics_inv, depth_scale=1.0 / camera._depth_scale
+                )
                 colors = rgb.reshape(-1, 3) / 255.0
                 points, colors = crop_points(points, colors=colors, crop_min=-2*np.ones(3), crop_max=2*np.ones(3))
                 pcds.append(points_to_pcd(points, colors=colors))

@@ -74,6 +74,9 @@ class RealSenseCamera:
         profile = self._pipeline.get_active_profile()
 
         self.calibration = {"intrinsics": {}}
+        # meters-per-depth-unit; overwritten from the device below when depth is enabled.
+        # Default 0.001 (1mm) matches D415/D435/D455; the D405 reports ~0.0001 (0.1mm).
+        self._depth_scale = 0.001
 
         if self.rgb:
             color_stream = profile.get_stream(rs.stream.color)
@@ -85,6 +88,14 @@ class RealSenseCamera:
             self.calibration["intrinsics"]["depth"] = self._process_intrinsics(
                 depth_int
             )
+            # True depth unit for THIS device. depth_to_points hardcodes 1000 (1mm units),
+            # correct for D415/D435/D455 but ~10x wrong for the D405 (~0.1mm) -- which is
+            # what blew up the debug point cloud. Query it so the cloud renders true-scale.
+            try:
+                self._depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
+                print(f"[realsense] {self._serial_number} depth_scale = {self._depth_scale} m/unit")
+            except Exception as e:
+                print(f"[realsense] could not query depth_scale ({e}); using {self._depth_scale}")
         if self.ir:
             ir_left_stream = profile.get_stream(rs.stream.infrared, 1)
             ir_left_int = ir_left_stream.as_video_stream_profile().get_intrinsics()
