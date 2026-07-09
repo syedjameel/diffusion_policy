@@ -140,9 +140,21 @@ if __name__ == "__main__":
     )
     # CAMERA position(s) (small triad) -- where each D405 sees the scene from.
     for c in final_calib_dict:
-        cam_pos = list(map(float, np.array(c["camera_base_pos"]).ravel()))
-        geoms.append(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.08, origin=cam_pos))
-        print(f"[frames] camera {c['camera_serial_number']}  base pos = {np.round(cam_pos, 3)}")
+        cam_pos = np.array(c["camera_base_pos"]).ravel()
+        cam_ori = np.array(c["camera_base_ori"])  # camera axes expressed in the base frame
+        # Build the triad at the origin, ROTATE it into the camera's real orientation, then
+        # move it to the camera. (create_coordinate_frame with only `origin` stays base-aligned
+        # -- it would show no tilt. The blue axis is the OpenCV optical axis = view direction.)
+        cam_tri = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.08)
+        cam_tri.rotate(cam_ori, center=(0.0, 0.0, 0.0))
+        cam_tri.translate(list(map(float, cam_pos)))
+        geoms.append(cam_tri)
+        opt = cam_ori[:, 2]  # optical axis (view direction) in base frame
+        down_deg = float(np.degrees(np.arctan2(-opt[2], np.linalg.norm(opt[:2]))))
+        print(
+            f"[frames] camera {c['camera_serial_number']}  base pos = {np.round(cam_pos, 3)}"
+            f"  view-dir = {np.round(opt, 3)}  (~{down_deg:.0f} deg below horizontal)"
+        )
     print(
         f"[frames] BIG triad = ROBOT BASE @ [0,0,0] | MID triad = MARKER @ {list(map(float, aruco_offset))}"
         f" | SMALL triad(s) = CAMERA. Base->marker should measure ~{np.linalg.norm(aruco_offset):.3f} m."
