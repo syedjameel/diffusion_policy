@@ -52,13 +52,19 @@ if __name__ == "__main__":
             #  * marker ORIENTATION: marker +X must point FROM the robot base TOWARD the
             #    marker/workspace (physically: pendant -Y on our rig = sim +X), marker +Y
             #    90deg CCW from that (viewed from above). NOT pendant-aligned.
-            #  * offset = marker center in sim frame: 0.463 m from base toward the
-            #    workspace => [0.463, 0, 0]. (Pendant reads the same point as [0,-0.463,0];
-            #    our rig's workspace sits 90deg from the authors' -- see the rig-orientation
-            #    note in diffusion_policy/real_world/ur10e_kinematics.py.)
+            #  * offset = marker center in sim frame, measured by a robot TCP TOUCH-OFF on
+            #    the marker center (2026-07-16): pendant base-frame read [0, -455, 0] mm,
+            #    which is sim [0.455, 0, 0] (our rig's workspace sits 90deg from the
+            #    authors' -- sim +X = pendant -Y; see the rig-orientation note in
+            #    diffusion_policy/real_world/ur10e_kinematics.py). The pendant z read 0
+            #    even though the marker lies on the 4 mm mat (slight table slant / mat
+            #    compression), so z stays 0 -- trust the robot, not the nominal mat height.
+            #    This value is the calibration's ground-truth anchor: any error here shifts
+            #    EVERY camera's base position by the same amount. Re-do the touch-off if
+            #    the marker is ever moved.
             aruco_offset = np.array(
                 [
-                    0.463,
+                    0.455,
                     0.0,
                     0.0,
                 ]
