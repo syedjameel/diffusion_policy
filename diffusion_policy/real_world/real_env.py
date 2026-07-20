@@ -176,8 +176,13 @@ class RealEnv:
                 print(f"Using custom initial joint positions: {j_init}")
             else:
                 # Use default initial joint positions
-                # UR10e real home pose (measured from the pendant, degrees).
-                j_init = np.array([67.94, -93.33, 146.23, -142.91, -90.04, -22.95]) / 180 * np.pi
+                # UR10e real home pose (pendant degrees). This is the rig's standardized home,
+                # set during the 2026-07-16 camera calibration: TCP = base-frame [0, -500, 100] mm
+                # (100 mm above the mat), rpy [0, 3.141, 0] -- FK cross-checks (wrist_3 flange at
+                # [0,-500,300], tool point 200 mm below = 100 mm). The old [67.94,-93.33,146.23,
+                # -142.91,-90.04,-22.95] was a stale pre-calibration pose (TCP ~[0,-463,20], nearly
+                # on the mat) -- replaced 2026-07-20 so startup homes to the ACTUAL rig home.
+                j_init = np.array([69.58, -98.08, 138.53, -130.43, -89.95, -20.42]) / 180 * np.pi
                 print(f"Using default UR10e initial joint positions: {j_init}")
 
         robot = RTDEInterpolationController(
