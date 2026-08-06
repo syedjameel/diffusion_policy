@@ -94,6 +94,7 @@ class MultiRealsense:
     def start(self, wait=True, put_start_time=None):
         if put_start_time is None:
             put_start_time = time.time()
+        self._hardware_reset_all_devices()
         for camera in self.cameras.values():
             camera.start(wait=False, put_start_time=put_start_time)
         
@@ -103,9 +104,45 @@ class MultiRealsense:
     def stop(self, wait=True):
         for camera in self.cameras.values():
             camera.stop(wait=False)
-        
+
         if wait:
             self.stop_wait()
+
+    def _hardware_reset_all_devices(self):
+        """Hardware-reset every target device BEFORE spawning the camera processes.
+
+        A D405 left in a bad state by a prior crashed run will pipeline.start() OK but
+        then time out in wait_for_frames ("Frame didn't arrive within 5000"), so the
+        reset itself is required. Doing it inside each SingleRealsense process raced:
+        one process could hardware_reset its device (bouncing the shared USB hub /
+        triggering librealsense device-change handling) while a sibling was inside
+        pipeline.start(), intermittently leaving cameras unopened. Resetting all
+        devices here, from the single parent process, then waiting for re-enumeration
+        before any pipeline opens, mirrors the proven bringup ordering of the lerobot
+        rig (camera_test_rs.py: reset all -> wait -> re-query -> open).
+        """
+        serials = set(self.cameras.keys())
+        try:
+            for dev in rs.context().query_devices():
+                if dev.get_info(rs.camera_info.serial_number) in serials:
+                    dev.hardware_reset()
+            # reset drops the devices off USB; wait for ALL to re-enumerate
+            time.sleep(5.0)
+            deadline = time.time() + 15.0
+            present = set()
+            while time.time() < deadline:
+                present = {d.get_info(rs.camera_info.serial_number)
+                           for d in rs.context().query_devices()}
+                if serials <= present:
+                    break
+                time.sleep(0.5)
+            missing = serials - present
+            if missing:
+                print(f"[MultiRealsense] WARNING: devices did not re-enumerate "
+                      f"after reset: {sorted(missing)}")
+            time.sleep(1.0)  # settle after re-enumeration
+        except Exception as e:
+            print(f"[MultiRealsense] hardware reset skipped: {e}")
 
     def start_wait(self):
         for camera in self.cameras.values():

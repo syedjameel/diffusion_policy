@@ -281,27 +281,11 @@ class SingleRealsense(mp.Process):
         threadpool_limits(1)
         cv2.setNumThreads(1)
 
-        # Hardware-reset this device before opening the pipeline. A D405 left in a bad
-        # state by a prior crashed run will pipeline.start() OK but then time out in
-        # wait_for_frames ("Frame didn't arrive within 5000"). Mirrors the working lerobot
-        # camera bringup ("Resetting RealSense devices...") and makes eval robust to prior
-        # crashes. Each process resets only its own serial.
-        try:
-            for _dev in rs.context().query_devices():
-                if _dev.get_info(rs.camera_info.serial_number) == self.serial_number:
-                    _dev.hardware_reset()
-                    break
-            # wait for the device to re-enumerate before enable_device (reset drops USB)
-            _deadline = time.time() + 15.0
-            while time.time() < _deadline:
-                time.sleep(0.5)
-                if self.serial_number in [
-                    d.get_info(rs.camera_info.serial_number) for d in rs.context().query_devices()
-                ]:
-                    break
-            time.sleep(1.0)  # settle after re-enumeration
-        except Exception as _e:
-            print(f"[SingleRealsense {self.serial_number}] hardware_reset skipped: {_e}")
+        # NOTE: no per-process hardware_reset here. Resetting a device from one camera
+        # process while a sibling is inside pipeline.start() bounces the shared USB hub
+        # and intermittently leaves cameras unopened. The reset now happens once for ALL
+        # devices in MultiRealsense.start() (parent process) BEFORE these workers spawn,
+        # matching the proven bringup ordering of camera_test_rs.py.
 
         w, h = self.resolution
         fps = self.capture_fps
