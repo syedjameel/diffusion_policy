@@ -149,6 +149,13 @@ class PS4EvalJoystick:
         with self._lock:
             return self._gripper_state
 
+    def set_gripper_state(self, state):
+        """Force the X-toggle latch (+1.0 open / -1.0 closed). Used to re-sync
+        after scripted gripper moves (e.g. close-at-home on reset), so entering
+        takeover afterwards doesn't instantly command a stale state."""
+        with self._lock:
+            self._gripper_state = float(state)
+
     def get_reset_events(self):
         """Edge-triggered chord events, cleared on read:
         {'success': trigger+Triangle pressed, 'failure': trigger+Circle pressed}

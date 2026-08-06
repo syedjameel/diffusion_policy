@@ -305,6 +305,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     target_joints=real_to_sim_joints(env.robot.joints_init),
                     close_gripper=True)
                 time.sleep(GRIPPER_CLOSE_TIME_S)  # let the serial gripper physically close
+                if ps4 is not None:
+                    ps4.set_gripper_state(-1.0)  # sync X-toggle: gripper is closed now
                 print('Gripper closed at startup home pose.')
             else:
                 print("Warning: no joints_init defined, cannot close gripper at startup")
@@ -351,6 +353,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 curr_jp = env.robot.get_state()['ActualQ']
                 env.robot.joint_torque_control(
                     target_joints=curr_jp, close_gripper=False)
+                print('[Reset] gripper OPEN commanded at current pose')
                 save_sysid_data()
                 sysid_records.clear()
                 stuck_buffer.clear()
@@ -362,6 +365,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     episode_video_writer.close()
                     episode_video_writer = None
                     print(f"  Episode video saved.")
+
+                # Re-assert the open before homing (belt-and-braces: guarantees the
+                # open is the newest gripper command even if anything was in flight
+                # when the reset fired; transition-gated, so no extra serial traffic)
+                env.robot.joint_torque_control(
+                    target_joints=curr_jp, close_gripper=False)
 
                 # Reset policy state
                 policy.reset()
@@ -379,6 +388,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         target_joints=real_to_sim_joints(env.robot.joints_init),
                         close_gripper=True)
                     time.sleep(GRIPPER_CLOSE_TIME_S)  # let the serial gripper physically close
+                    if ps4 is not None:
+                        ps4.set_gripper_state(-1.0)  # sync X-toggle: gripper is closed now
                 else:
                     print("Warning: no joints_init defined, cannot close gripper at reset pose")
 
