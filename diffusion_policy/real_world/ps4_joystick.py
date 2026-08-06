@@ -114,6 +114,9 @@ class PS4EvalJoystick:
                 self._slow = slow
                 if cross and not self._prev_cross:
                     self._gripper_state = -self._gripper_state
+                    print('[PS4] X toggle -> gripper {} (applied only while R1 '
+                          'takeover is held)'.format(
+                              'OPEN' if self._gripper_state > 0 else 'CLOSED'))
                 if trigger_held and triangle and not self._prev_triangle:
                     self._success_reset = True
                 if trigger_held and circle and not self._prev_circle:
