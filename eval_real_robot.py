@@ -332,6 +332,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             STUCK_GRIPPER_OPEN_STEPS = int(frequency)  # 1 s open at control freq
             stuck_buffer = []  # list of (t, joint_pos)
             takeover_active = False  # PS4 R1 held: policy paused, joystick jogs the arm
+            last_jog_print = 0.0  # rate-limit the takeover jog debug print
 
             outcomes_path = pathlib.Path(output) / 'episode_outcomes.jsonl'
 
@@ -478,6 +479,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             jog_gripper = ps4.get_gripper_state()  # +1 open / -1 closed
                             action = np.concatenate(
                                 [jog_raw, [jog_gripper]])[None].astype(np.float32)
+                            if time.monotonic() - last_jog_print > 1.0:
+                                print(f'[PS4] jog x={jx:+.2f} y={jy:+.2f} '
+                                      f'z={jz:+.2f} yaw={jyaw:+.2f} '
+                                      f'grip={jog_gripper:+.0f} '
+                                      f'raw={np.round(jog_raw, 2)}')
+                                last_jog_print = time.monotonic()
                         else:
                             # run inference
                             with torch.no_grad():
