@@ -345,6 +345,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                 robot, close the gripper once it has settled, start a new episode."""
                 nonlocal episode_video_writer, eval_t_start, t_start, iter_idx, \
                     term_area_start_timestamp
+                # Open the gripper immediately at the current pose (any reset --
+                # 'r', success or failure -- releases the object right away, before
+                # episode saving and the homing motion).
+                curr_jp = env.robot.get_state()['ActualQ']
+                env.robot.joint_torque_control(
+                    target_joints=curr_jp, close_gripper=False)
                 save_sysid_data()
                 sysid_records.clear()
                 stuck_buffer.clear()
