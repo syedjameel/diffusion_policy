@@ -14,11 +14,21 @@ Press "C" to start evaluation (hand control over to policy).
 Press "Q" to exit program.
 
 ================ Policy in control ==============
-Make sure you can hit the robot hardware emergency-stop button quickly! 
+Make sure you can hit the robot hardware emergency-stop button quickly!
 
 Recording control:
 Press "S" to stop evaluation and gain control back.
 Press "R" to reset robot to initial position and start new trajectory.
+
+================ PS4 joystick (optional) ==============
+Works without window focus. Plug in a PS4 controller before launching.
+Hold R1: takeover -- policy paused, sticks jog the arm
+         (left stick = x/y, right stick = z/yaw, X toggles gripper,
+          hold L1 for slow jog). Release R1 to resume the policy.
+Trigger (L2 or R2) + Triangle: end episode marked SUCCESS, reset robot.
+Trigger (L2 or R2) + Circle:   end episode marked FAILURE, reset robot.
+Outcomes are appended to <output>/episode_outcomes.jsonl.
+Every reset closes the gripper once the arm reaches the reset position.
 """
 
 # %%
@@ -50,7 +60,9 @@ import imageio
 from scipy.spatial.transform import Rotation as R
 
 # Calibrated FK matching simulation (wrist_3_link in REP-103 base_link frame)
-from diffusion_policy.real_world.ur10e_kinematics import get_ee_pose, quat_to_axis_angle, apply_delta_pose
+from diffusion_policy.real_world.ur10e_kinematics import (
+    get_ee_pose, quat_to_axis_angle, apply_delta_pose, real_to_sim_joints)
+from diffusion_policy.real_world.ps4_joystick import PS4EvalJoystick
 
 # Robomimic imports
 import robomimic.utils.torch_utils as TorchUtils
@@ -134,6 +146,17 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     # Per-axis Cartesian scale matching simulation DiffIK config
     CARTESIAN_SCALE = np.array([0.01, 0.01, 0.002, 0.02, 0.02, 0.2])
     print(f"Cartesian OSC scale: {CARTESIAN_SCALE}")
+
+    # Measured wall-clock time for the serial gripper to fully close; waited out
+    # after every close command so no episode starts with the gripper mid-motion.
+    GRIPPER_CLOSE_TIME_S = 1.2
+
+    # PS4 takeover jog: max speed at full stick deflection (L1 held scales down).
+    # Converted to per-step raw actions via CARTESIAN_SCALE, then clipped to [-1, 1]
+    # so a takeover command can never exceed what the policy itself could output.
+    JOG_SPEED_XY = 0.05   # m/s
+    JOG_SPEED_Z = 0.05    # m/s (capped at 0.002/dt by the raw-action clip)
+    JOG_SPEED_YAW = 0.5   # rad/s
 
     # Sysid data collection state
     sysid_records = []  # list of (joint_pos, target_pos, target_quat)
@@ -233,8 +256,17 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             # video recording quality, lower is better (but slower).
             video_crf=21,
             shm_manager=shm_manager) as env:
-            
+
             cv2.setNumThreads(1)
+
+            # PS4 joystick (optional): episode success/failure resets + R1 takeover jog.
+            # Missing controller degrades gracefully to keyboard-only control.
+            try:
+                ps4 = PS4EvalJoystick()
+                print(f"[PS4] controller connected: {ps4.name}")
+            except Exception as e:
+                ps4 = None
+                print(f"[PS4] joystick unavailable ({e}); keyboard-only control")
 
             print("Waiting for realsense")
             time.sleep(5.0)
@@ -265,6 +297,17 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
             print('Ready!')
             time.sleep(1.0)
+
+            # Close the gripper at the startup home pose too (same as after every
+            # reset): hold the home joint target with close_gripper=True.
+            if env.robot.joints_init is not None:
+                env.robot.joint_torque_control(
+                    target_joints=real_to_sim_joints(env.robot.joints_init),
+                    close_gripper=True)
+                time.sleep(GRIPPER_CLOSE_TIME_S)  # let the serial gripper physically close
+                print('Gripper closed at startup home pose.')
+            else:
+                print("Warning: no joints_init defined, cannot close gripper at startup")
             
             # Initialize video recording if enabled
             video_fps = int(frequency)
@@ -286,7 +329,66 @@ def main(input, output, robot_ip, match_dataset, match_episode,
             STUCK_JOINT_THRESHOLD_RAD = 0.002  # ~0.1 deg max movement per joint over window
             STUCK_GRIPPER_OPEN_STEPS = int(frequency)  # 1 s open at control freq
             stuck_buffer = []  # list of (t, joint_pos)
-            
+            takeover_active = False  # PS4 R1 held: policy paused, joystick jogs the arm
+
+            outcomes_path = pathlib.Path(output) / 'episode_outcomes.jsonl'
+
+            def log_episode_outcome(episode_id, outcome):
+                with open(outcomes_path, 'a') as f:
+                    f.write(json.dumps({
+                        'episode_id': int(episode_id),
+                        'outcome': outcome,
+                        'timestamp': time.time()}) + '\n')
+
+            def reset_robot_for_new_episode():
+                """Shared 'r'-key / PS4-chord reset: end + save the episode, home the
+                robot, close the gripper once it has settled, start a new episode."""
+                nonlocal episode_video_writer, eval_t_start, t_start, iter_idx, \
+                    term_area_start_timestamp
+                save_sysid_data()
+                sysid_records.clear()
+                stuck_buffer.clear()
+                print('Resetting robot for new trajectory...')
+                env.end_episode()
+
+                # Close per-episode video writer
+                if save_video and episode_video_writer is not None:
+                    episode_video_writer.close()
+                    episode_video_writer = None
+                    print(f"  Episode video saved.")
+
+                # Reset policy state
+                policy.reset()
+
+                # Move robot to initial position
+                env.robot.reset_to_initial_position()
+
+                # Wait a moment for robot to settle
+                time.sleep(5.0)
+
+                # Close the gripper at the reset position: re-send the same home joint
+                # target reset_to_initial_position used, now with close_gripper=True.
+                if env.robot.joints_init is not None:
+                    env.robot.joint_torque_control(
+                        target_joints=real_to_sim_joints(env.robot.joints_init),
+                        close_gripper=True)
+                    time.sleep(GRIPPER_CLOSE_TIME_S)  # let the serial gripper physically close
+                else:
+                    print("Warning: no joints_init defined, cannot close gripper at reset pose")
+
+                # Start new episode
+                start_delay = 1.0
+                eval_t_start = time.time() + start_delay
+                t_start = time.monotonic() + start_delay
+                env.start_episode(eval_t_start)
+                precise_wait(eval_t_start, time_func=time.time)
+
+                # Reset iteration counter
+                iter_idx = 0
+                term_area_start_timestamp = float('inf')
+
+                print('Robot reset complete! Starting new trajectory.')
+
             while True:
                 # ========== policy control loop ==============
                 try:
@@ -337,15 +439,38 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                                 if long_video_writer is not None:
                                     long_video_writer.append_data(frame)
 
-                        # run inference
-                        with torch.no_grad():
-                            obs_dict_np = get_real_obs_dict(
-                                env_obs=obs, shape_meta=cfg['shape_meta']
-                            )
-                            obs_dict = dict_apply(obs_dict_np,
-                                lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
-                            result = policy.predict_action(obs_dict)
-                            action = result['action'][0:1].detach().to('cpu').numpy()
+                        # PS4 takeover: while R1 is held the policy is paused and the
+                        # sticks jog the arm through the same Cartesian OSC path.
+                        takeover = ps4 is not None and ps4.is_takeover()
+                        if takeover != takeover_active:
+                            takeover_active = takeover
+                            stuck_buffer.clear()
+                            print('[PS4] takeover ON - policy paused, joystick in control'
+                                  if takeover else
+                                  '[PS4] takeover OFF - policy resumed')
+
+                        if takeover:
+                            # joystick jog -> raw (pre-scale) action, so the downstream
+                            # scaling/recording path is identical to policy actions
+                            jx, jy, jz, jyaw = ps4.get_jog()
+                            jog_delta = np.array([
+                                jx * JOG_SPEED_XY, jy * JOG_SPEED_XY,
+                                jz * JOG_SPEED_Z, 0.0, 0.0,
+                                jyaw * JOG_SPEED_YAW]) * dt
+                            jog_raw = np.clip(jog_delta / CARTESIAN_SCALE, -1.0, 1.0)
+                            jog_gripper = ps4.get_gripper_state()  # +1 open / -1 closed
+                            action = np.concatenate(
+                                [jog_raw, [jog_gripper]])[None].astype(np.float32)
+                        else:
+                            # run inference
+                            with torch.no_grad():
+                                obs_dict_np = get_real_obs_dict(
+                                    env_obs=obs, shape_meta=cfg['shape_meta']
+                                )
+                                obs_dict = dict_apply(obs_dict_np,
+                                    lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
+                                result = policy.predict_action(obs_dict)
+                                action = result['action'][0:1].detach().to('cpu').numpy()
                         
                         # action shape: (N, 7) where [:, :6] is Cartesian delta, [:, 6] is gripper
                         raw_arm_action = action[:, :6]  # Raw network output (pre-scale)
@@ -354,7 +479,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         gripper_actions = action[:, 6:7]
 
                         # Stuck detection: if robot barely moved for STUCK_WINDOW_S, open gripper to get unstuck
-                        if gripper_open_steps_remaining == 0:
+                        # (skipped during PS4 takeover -- a human holding the arm still is not "stuck")
+                        if gripper_open_steps_remaining == 0 and not takeover:
                             t_now = time.monotonic()
                             stuck_buffer.append((t_now, obs['arm_joint_pos'][-1].copy()))
                             # keep only last STUCK_WINDOW_S
@@ -449,40 +575,21 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             break
                         elif key_stroke == ord('r'):
                             # Reset robot and start new trajectory
-                            save_sysid_data()
-                            sysid_records.clear()
-                            stuck_buffer.clear()
-                            print('Resetting robot for new trajectory...')
-                            env.end_episode()
-                            
-                            # Close per-episode video writer
-                            if save_video and episode_video_writer is not None:
-                                episode_video_writer.close()
-                                episode_video_writer = None
-                                print(f"  Episode video saved.")
-                            
-                            # Reset policy state
-                            policy.reset()
-                            
-                            # Move robot to initial position
-                            env.robot.reset_to_initial_position()
-                            
-                            # Wait a moment for robot to settle
-                            time.sleep(5.0)
-                            
-                            # Start new episode
-                            start_delay = 1.0
-                            eval_t_start = time.time() + start_delay
-                            t_start = time.monotonic() + start_delay
-                            env.start_episode(eval_t_start)
-                            precise_wait(eval_t_start, time_func=time.time)
-                            
-                            # Reset iteration counter
-                            iter_idx = 0
-                            term_area_start_timestamp = float('inf')
-                            
-                            print('Robot reset complete! Starting new trajectory.')
+                            reset_robot_for_new_episode()
                             continue
+
+                        # PS4 chord resets: trigger+Triangle = success, trigger+Circle = failure.
+                        # Both save the episode and reset (same as 'r'); the outcome is
+                        # additionally logged to episode_outcomes.jsonl.
+                        if ps4 is not None:
+                            ps4_events = ps4.get_reset_events()
+                            if ps4_events['success'] or ps4_events['failure']:
+                                outcome = 'success' if ps4_events['success'] else 'failure'
+                                episode_id = env.replay_buffer.n_episodes
+                                print(f"[PS4] Episode {episode_id} marked {outcome.upper()}")
+                                log_episode_outcome(episode_id, outcome)
+                                reset_robot_for_new_episode()
+                                continue
 
                         # auto termination
                         terminate = False
